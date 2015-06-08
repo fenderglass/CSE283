@@ -42,23 +42,36 @@ def read_network(filename):
 
 
 def get_features(mutations, sample_labels, network):
-    all_genes = set()
-    sample_weights = {}
-    print("Genrating features")
-    for sample, genes in mutations.iteritems():
-        weights = propagate(genes, network)
-        sample_weights[sample] = weights
-        for gene in weights:
-            all_genes.add(gene)
+    gene_ids = {}
+    cur_id = 0
+    for genes in mutations.itervalues():
+        for gene in genes:
+            if gene not in gene_ids:
+                gene_ids[gene] = cur_id
+                cur_id += 1
+    for gene in network:
+        if gene not in gene_ids:
+            gene_ids[gene] = cur_id
+            cur_id += 1
 
-    features = np.zeros((len(mutations), len(all_genes)))
+    adj_matrix = np.zeros((cur_id, cur_id))
+    for node, neighbors in network.iteritems():
+        for neighbor in neighbors:
+            adj_matrix[gene_ids[node]][gene_ids[neighbor]] = 1
+
+    print("Propagating")
+    features = np.zeros((len(mutations), cur_id))
     labels = np.zeros(len(mutations))
-    for i, mutation in enumerate(sample_weights):
-        for j, gene in enumerate(all_genes):
-            features[i][j] = sample_weights[mutation].get(gene, 0)
-            labels[i] = sample_labels[mutation]
+    for sample_id, sample in enumerate(mutations):
+        print(sample_id, "/", len(mutations))
+        genes = set(map(gene_ids.get, mutations[sample]))
+        weights = propagate(genes, adj_matrix)
 
-    return features, labels
+        for gene_id, weight in enumerate(weights):
+            features[sample_id][gene_id] = weight
+            labels[sample_id] = sample_labels[sample]
+
+    return features, labels, gene_ids
 
 
 def split_training_set(features, labels, rate):
@@ -75,23 +88,20 @@ def split_training_set(features, labels, rate):
             np.array(second_fetures), np.array(second_labels))
 
 
-def propagate(nodes, network):
-    values = {n : 1 for n in nodes}
-    new_values = defaultdict(int)
-    alpha = 0.05
-    THRESHOLD = 0.1
-    for it_num in xrange(10):
-        for node, value in values.iteritems():
-            for neighbor in network[node]:
-                new_values[neighbor] += alpha * value
-        for node in nodes:
-            new_values[node] += (1 - alpha)
+def propagate(start_nodes, adj_matrix):
+    ALPHA = 0.6
+    ITERS = 2
 
-        values = {node : new_values[node] for node in new_values
-                  if new_values[node] > THRESHOLD}
-        new_values = defaultdict(int)
+    values = np.zeros((1, adj_matrix.shape[0]))
+    for node in start_nodes:
+        values[0][node] = 1
 
-    return values
+    for it_num in xrange(ITERS):
+        values = ALPHA * values.dot(adj_matrix)
+        for node in start_nodes:
+            values[0][node] += 1 - ALPHA
+
+    return sum(values)
 
 
 def train_svm(features, labels):
@@ -101,7 +111,26 @@ def train_svm(features, labels):
                                 split_training_set(norm_features, labels, 0.4)
     clf = svm.SVC()
     clf.fit(train_features, train_labels)
-    print(clf.score(test_features, test_labels))
+
+    svm_features = np.zeros(features.shape[1])
+    for i in xrange(len(clf.support_)):
+        for j in xrange(features.shape[1]):
+            svm_features[j] += clf.dual_coef_[0][i] * clf.support_vectors_[i][j]
+
+    print("Score:", clf.score(test_features, test_labels))
+    return svm_features
+
+
+def print_features(svm_features, gene_ids):
+    id_2_gene = {}
+    for gene, g_id in gene_ids.items():
+        id_2_gene[g_id] = gene
+
+    print("Main features:")
+    svm_main = sorted(enumerate(svm_features),
+                      key=lambda x: abs(x[1]), reverse=True)
+    for f_id, f_val in svm_main[:20]:
+        print("{0}\t{1:5.2f}".format(id_2_gene[f_id], f_val))
 
 
 def main():
@@ -112,8 +141,9 @@ def main():
         sample_mutations = read_maf(maf_file)
         mutations.update(sample_mutations)
         labels.update({l : maf_no for l in sample_mutations})
-    features, labels = get_features(mutations, labels, network)
-    train_svm(features, labels)
+    features, labels, gene_ids = get_features(mutations, labels, network)
+    svm_features = train_svm(features, labels)
+    print_features(svm_features, gene_ids)
 
 
 if __name__ == "__main__":
