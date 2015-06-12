@@ -63,13 +63,14 @@ def get_features(mutations, sample_labels, network):
     features = np.zeros((len(mutations), cur_id))
     labels = np.zeros(len(mutations))
     for sample_id, sample in enumerate(mutations):
-        print(sample_id, "/", len(mutations))
+        #print(sample_id, "/", len(mutations))
         genes = set(map(gene_ids.get, mutations[sample]))
         weights = propagate(genes, adj_matrix)
 
         for gene_id, weight in enumerate(weights):
             features[sample_id][gene_id] = weight
             labels[sample_id] = sample_labels[sample]
+            #labels[sample_id] = random.randint(0, 1)
 
     return features, labels, gene_ids
 
